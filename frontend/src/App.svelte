@@ -1,8 +1,10 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import Waterfall from "./lib/Waterfall.svelte";
+  import Login from "./lib/Login.svelte";
   import { WebTrxClient, type ServerEvent, type SpectrumRow, type AudioChunk } from "./lib/ws";
   import { AudioPlayer, MicCapture } from "./lib/audio";
+  import { checkSession, logout as apiLogout, fetchTxLog, type TxLogEntry } from "./lib/auth";
 
   // Only "sim" actually connects right now (SimBackend.DEVICE_TYPES) --
   // the real pluto/hackrf/rtlsdr/soundcard/aioc choices from
@@ -24,9 +26,12 @@
   const audioPlayer = new AudioPlayer();
   const mic = new MicCapture();
 
+  let authChecked = false;
+  let authenticated = false;
   let wsConnected = false;
   let backendName = "";
   let events: string[] = [];
+  let txLog: TxLogEntry[] = [];
 
   // -- RX state --
   let rxDeviceType = "sim";
@@ -83,8 +88,14 @@
       if (e.direction === "tx") txScanned = devices;
     }
     if (e.event === "keyed") keyed = true;
-    if (e.event === "unkeyed") keyed = false;
-    if (e.event === "estop") keyed = false;
+    if (e.event === "unkeyed") {
+      keyed = false;
+      void refreshTxLog();
+    }
+    if (e.event === "estop") {
+      keyed = false;
+      void refreshTxLog();
+    }
     log(`${e.event} ${JSON.stringify(e)}`);
   };
   client.onSpectrum = (s: SpectrumRow) => waterfall?.pushRow(s.row, s.centerHz, s.spanHz);
@@ -92,9 +103,36 @@
     if (audioOn) audioPlayer.push(a.pcm16, a.sampleRateHz);
   };
 
-  onMount(() => {
+  function connectWs(): void {
     const proto = location.protocol === "https:" ? "wss" : "ws";
     client.connect(`${proto}://${location.host}/ws`);
+  }
+
+  async function refreshTxLog(): Promise<void> {
+    txLog = await fetchTxLog(20);
+  }
+
+  async function handleLoginSuccess(): Promise<void> {
+    authenticated = true;
+    connectWs();
+    await refreshTxLog();
+  }
+
+  async function doLogout(): Promise<void> {
+    client.close();
+    await apiLogout();
+    location.reload(); // simplest full reset of all client-side session state
+  }
+
+  onMount(() => {
+    void (async () => {
+      authenticated = await checkSession();
+      authChecked = true;
+      if (authenticated) {
+        connectWs();
+        await refreshTxLog();
+      }
+    })();
     return () => client.close();
   });
 
@@ -174,14 +212,31 @@
   function pocsagPtt(): void {
     client.request("ptt_on"); // one-shot; SimBackend/real POCSAG both auto-unkey, see docs/PROJECT_PLAN.md section 4
   }
+
+  function fmtFreq(hz: number | null): string {
+    return hz === null ? "—" : `${(hz / 1e6).toFixed(4)} MHz`;
+  }
+  function fmtTime(epochS: number): string {
+    return new Date(epochS * 1000).toLocaleTimeString();
+  }
+  function fmtDuration(startedAt: number, endedAt: number | null): string {
+    if (endedAt === null) return "läuft…";
+    return `${(endedAt - startedAt).toFixed(1)} s`;
+  }
 </script>
 
+{#if !authChecked}
+  <div class="loading">Web-TRX &mdash; lade&hellip;</div>
+{:else if !authenticated}
+  <Login onSuccess={handleLoginSuccess} />
+{:else}
 <header class="topbar">
   <h1>Web-TRX</h1>
   <span class="status-pill" class:ok={wsConnected}>
     {wsConnected ? `verbunden · ${backendName}` : "getrennt"}
   </span>
   <div class="spacer"></div>
+  <button on:click={doLogout}>Abmelden</button>
   <button class="danger" on:click={estop}>NOTAUS</button>
 </header>
 
@@ -321,14 +376,36 @@
   </section>
 </div>
 
-<section class="panel log-panel">
-  <div class="panel-title">Events</div>
-  <ul class="events">
-    {#each events as e}
-      <li>{e}</li>
-    {/each}
-  </ul>
-</section>
+<div class="row bottom-panels">
+  <section class="panel log-panel">
+    <div class="panel-title">TX-Verlauf</div>
+    <ul class="tx-log">
+      {#each txLog as entry (entry.id)}
+        <li>
+          <span class="mode-tag">{entry.mode.toUpperCase()}</span>
+          <span>{fmtFreq(entry.freq_hz)}</span>
+          <span class="dim">{fmtTime(entry.started_at)}</span>
+          <span class="dim">{fmtDuration(entry.started_at, entry.ended_at)}</span>
+          {#if Object.keys(entry.params).length}
+            <span class="dim">{JSON.stringify(entry.params)}</span>
+          {/if}
+        </li>
+      {:else}
+        <li class="dim">Noch keine Aussendungen.</li>
+      {/each}
+    </ul>
+  </section>
+
+  <section class="panel log-panel">
+    <div class="panel-title">Events</div>
+    <ul class="events">
+      {#each events as e}
+        <li>{e}</li>
+      {/each}
+    </ul>
+  </section>
+</div>
+{/if}
 
 <style>
   :global(body) {
@@ -448,5 +525,49 @@
   .events li {
     padding: 2px 0;
     border-bottom: 1px solid var(--border);
+  }
+
+  .loading {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 100vh;
+    color: var(--text-dim);
+  }
+
+  .bottom-panels {
+    align-items: stretch;
+  }
+  .bottom-panels .panel {
+    flex: 1;
+    min-width: 0;
+    margin-bottom: 0;
+  }
+
+  .tx-log {
+    max-height: 220px;
+    overflow-y: auto;
+    font-size: 0.78rem;
+    list-style: none;
+    padding: 0;
+    margin: 0;
+  }
+  .tx-log li {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    align-items: center;
+    padding: 4px 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .mode-tag {
+    font-family: var(--mono);
+    font-weight: 700;
+    color: var(--accent);
+    min-width: 4.5em;
+  }
+  .dim {
+    color: var(--text-dim);
+    font-size: 0.75rem;
   }
 </style>

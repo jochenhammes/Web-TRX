@@ -126,10 +126,11 @@ class SessionManager:
         "ptt_on", "ptt_off", "estop",
     )
 
-    def __init__(self, backend: SessionBackend):
+    def __init__(self, backend: SessionBackend, tx_log=None):
         self.backend = backend
         self.backend.bind(self._emit_event, self._on_spectrum, self._on_audio)
         self._clients: set[WebSocket] = set()
+        self.tx_log = tx_log  # TxLog | None, see txlog.py
 
     @property
     def backend_name(self) -> str:
@@ -209,7 +210,26 @@ class SessionManager:
         await self.backend.submit_tx_audio(AudioFrame(pcm16=pcm16, sample_rate_hz=sample_rate_hz))
 
     async def _emit_event(self, name: str, fields: dict) -> None:
+        if self.tx_log is not None:
+            self._record_tx_log(name)
         await self._broadcast_json({"event": name, **fields})
+
+    def _record_tx_log(self, event_name: str) -> None:
+        """keyed -> open a record (using the backend's own tx snapshot for
+        mode/freq/device/params, not the event's fields -- keeps this
+        working for ANY SessionBackend, not just fields SimBackend happens
+        to put on its own 'keyed' event). unkeyed/estop -> close it;
+        closing twice (e.g. estop after an already-unkeyed state) is a
+        harmless no-op, see TxLog.record_unkeyed()."""
+        if event_name == "keyed":
+            tx = self.backend.snapshot()["tx"]
+            self.tx_log.record_keyed(
+                mode=tx.get("mode"), freq_hz=tx.get("freq_hz"),
+                device_type=tx.get("device_type"), connection=tx.get("connection"),
+                params=tx.get("mode_params") or {},
+            )
+        elif event_name in ("unkeyed", "estop"):
+            self.tx_log.record_unkeyed()
 
     async def _on_spectrum(self, frame: SpectrumFrame) -> None:
         payload = protocol.encode_spectrum_row(frame.row, frame.center_hz, frame.span_hz, frame.generation)

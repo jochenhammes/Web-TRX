@@ -26,13 +26,20 @@ cd backend
 python3 -m venv .venv && . .venv/bin/activate
 pip install -e ".[dev]"
 python -m pytest              # läuft komplett ohne GNU Radio/Hardware, siehe docs/DEBUGGING.md
-uvicorn web_trx.server:app --reload --port 8321
+uvicorn web_trx.server:create_app --factory --reload --port 8321
 ```
 
 `WEB_TRX_BACKEND` steuert, welche `SessionBackend`-Implementierung der
 Server verwendet: `sim` (Default, keine Hardware nötig) oder `gnuradio`
 (nur auf einem System mit GNU Radio/libiio und angeschlossener SDR-
 Hardware lauffähig, siehe `vendor/pluto-tx`).
+
+**Login:** ein geteiltes Passwort reicht (immer nur ein Betreiber, siehe
+`docs/PROJECT_PLAN.md` Abschnitt 1). `WEB_TRX_PASSWORD` setzen, sonst
+generiert der Server beim Start eines und gibt es auf stderr aus (wie bei
+Jupyter). Hinter TLS zusätzlich `WEB_TRX_COOKIE_SECURE=true` setzen.
+`WEB_TRX_TX_LOG_PATH` (Default `web_trx_tx_log.sqlite3` im Arbeits-
+verzeichnis) bestimmt, wo das persistente TX-Aktivitätslog liegt.
 
 ## Frontend (Entwicklung)
 

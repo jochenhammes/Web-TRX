@@ -22,7 +22,7 @@ je an einen SDR heranzukommen:
 
 ```bash
 cd backend && . .venv/bin/activate && python -m pytest
-uvicorn web_trx.server:app --port 8321          # Terminal 1
+uvicorn web_trx.server:create_app --factory --port 8321  # Terminal 1
 cd frontend && npm run dev                       # Terminal 2, Proxy auf :8321
 ```
 
@@ -52,14 +52,30 @@ dem Radio-Server (mit GNU Radio + Hardware-Zugriff), einbindbar per
 Projekt-Konversation; wird relevant ab Meilenstein M2/M3
 (Wasserfall/Audio, siehe `docs/PROJECT_PLAN.md`).
 
-## Bekannter Stolperstein (bereits gefunden & gefixt)
+## Bekannte Stolpersteine (bereits gefunden & gefixt)
 
-`SimBackend`s POCSAG-Auto-Unkey-Task rief am Ende `ptt(False)` auf, was
-wiederum versuchte, genau diese (sich selbst gerade ausführende) Task zu
-canceln — die `unkeyed`-Event-Auslieferung brach dadurch mitten im
-`await` ab, das Backend hing scheinbar (siehe Kommentar in
-`sim_backend.py`s `_auto_unkey_after()`). Gefunden über einen
-`faulthandler`-Traceback-Dump auf einen künstlichen Timeout, nicht durch
-Raten — bei ähnlichen "hängt ohne Fehlermeldung"-Fällen mit
-Fire-and-forget-`asyncio.create_task`s ist das der schnellste Weg zur
-Ursache.
+**Self-Cancellation-Deadlock.** `SimBackend`s POCSAG-Auto-Unkey-Task rief
+am Ende `ptt(False)` auf, was wiederum versuchte, genau diese (sich
+selbst gerade ausführende) Task zu canceln — die `unkeyed`-Event-
+Auslieferung brach dadurch mitten im `await` ab, das Backend hing
+scheinbar (siehe Kommentar in `sim_backend.py`s `_auto_unkey_after()`).
+Gefunden über einen `faulthandler`-Traceback-Dump auf einen künstlichen
+Timeout, nicht durch Raten — bei ähnlichen "hängt ohne Fehlermeldung"-
+Fällen mit Fire-and-forget-`asyncio.create_task`s ist das der schnellste
+Weg zur Ursache.
+
+**Seiteneffekte beim reinen Import.** `server.py` hatte lange ein
+Modul-Level `app = create_app()` (üblich, damit `uvicorn
+web_trx.server:app` die App findet). Das führte dazu, dass jeder Import
+des Moduls — auch nur für `from web_trx.server import create_app` in
+Tests, auch nur beim Pytest-Collection-Schritt — eine komplette
+zusätzliche Default-App baute: TX-Log-SQLite-Datei wurde ins
+Arbeitsverzeichnis geschrieben, ein zufälliges Passwort generiert und auf
+stderr ausgegeben. Gefunden, weil ein Test unerwartet die
+Passwort-Generierungsmeldung in `capsys`-Output zeigte, obwohl der Test
+explizit ein eigenes `AuthManager(password=...)` übergab. Fix: kein
+Modul-Level `app` mehr, stattdessen `uvicorn web_trx.server:create_app
+--factory` (siehe README). Allgemeine Lehre: ein Modul, das auch als
+Bibliothek importiert wird (hier: für `create_app`), darf beim bloßen
+Import keine Seiteneffekte (Dateien schreiben, Netzwerk, Zufallswerte
+ausgeben) auslösen.

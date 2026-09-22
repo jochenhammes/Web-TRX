@@ -297,9 +297,19 @@ Umgesetzt und per Tests + echtem Chromium-Browser verifiziert (siehe
   `AudioWorklet`) gebaut, um ohne zusätzliche Worklet-Build-Schritte sofort
   verifizierbar zu sein -- Umstieg auf `AudioWorklet` ist Härtungsarbeit
   für M5.
+- Auth (M1-Vorgriff): geteiltes Passwort (`WEB_TRX_PASSWORD`, sonst beim
+  Start generiert und auf stderr ausgegeben), Session-Cookie, Login-
+  Screen im Frontend, WS-Handshake wird ohne gültiges Cookie mit HTTP 403
+  abgelehnt (nicht erst nach `accept()` getrennt).
+- Persistentes TX-Log (M1-Vorgriff): jede Aussendung (Start/Ende, Modus,
+  Frequenz, Parameter) landet in SQLite (`web_trx/txlog.py`), angebunden
+  über dieselben `keyed`/`unkeyed`/`estop`-Events, die ohnehin durchs
+  WS-Protokoll laufen -- funktioniert daher unverändert mit jedem
+  `SessionBackend`, nicht nur `SimBackend`. Eigenes TX-Verlauf-Panel im
+  Frontend.
 
-Noch offen, bewusst nicht in diesem Schritt: Auth/Login (einfaches,
-geteiltes Passwort reicht laut Setting), persistentes TX-Log,
-`GnuRadioBackend` selbst (siehe `docs/DEBUGGING.md` -- blind ohne GNU
-Radio geschrieben wäre riskanter als nützlich; wird verifiziert, sobald
-eine Session mit echtem GNU Radio/Hardware zur Verfügung steht).
+Noch offen, bewusst nicht in diesem Schritt: `GnuRadioBackend` selbst
+(siehe `docs/DEBUGGING.md` -- blind ohne GNU Radio geschrieben wäre
+riskanter als nützlich; wird verifiziert, sobald eine Session mit echtem
+GNU Radio/Hardware zur Verfügung steht), `AudioWorklet`-Umstieg,
+Mehrgeräte-/Reconnect-Härtung (M5).

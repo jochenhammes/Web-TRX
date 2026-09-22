@@ -244,6 +244,7 @@ def _snapshot_direction(st: _DirectionState, keyed: bool) -> dict:
         "device_type": st.device_type,
         "connection": st.connection,
         "mode": st.mode,
+        "mode_params": dict(st.mode_params),
         "freq_hz": st.freq_hz,
         "gains": dict(st.gains),
         "keyed": keyed,

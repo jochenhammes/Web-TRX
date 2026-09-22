@@ -11,6 +11,10 @@ export default defineConfig({
     proxy: {
       "/ws": { target: "ws://127.0.0.1:8321", ws: true },
       "/health": "http://127.0.0.1:8321",
+      "/login": "http://127.0.0.1:8321",
+      "/logout": "http://127.0.0.1:8321",
+      "/session": "http://127.0.0.1:8321",
+      "/tx-log": "http://127.0.0.1:8321",
     },
   },
 });
