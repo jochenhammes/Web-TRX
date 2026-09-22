@@ -271,3 +271,35 @@ Web-TRX/
 - **Submodule-Pinning-Workflow**: wie/wann wird der `pluto-tx`-Submodule-
   Commit aktualisiert, wenn dort ein Bugfix landet? Sollte ein bewusster,
   dokumentierter Schritt sein, kein automatisches Tracking von `main`.
+
+## 9. Aktueller Stand (gegen SimBackend, ohne Hardware verifiziert)
+
+Umgesetzt und per Tests + echtem Chromium-Browser verifiziert (siehe
+`docs/DEBUGGING.md`):
+
+- Projekt-Grundgerüst (M0): Backend-/Frontend-Skeleton, `pluto-tx` als
+  gepinntes Submodule, CI.
+- Walking-Skeleton POCSAG-Roundtrip (M1-Vorgriff): Connect/Select-Mode/
+  Tune/PTT/E-STOP komplett über WebSocket, inkl. Auto-Unkey.
+- GUI-Politur (SDR++-Stil): dunkles Theme mit hellem Text in allen Feldern/
+  Dropdowns, Slider für Floor/Ceiling/Zoom, PTT-Button mit visuellem
+  Keyed-Zustand.
+- Wasserfall-Interaktion (M2-Vorgriff): Klick-zum-Tunen, Zoom-Slider
+  (aktuell client-seitiger Anzeige-Crop, siehe Kommentar in
+  `Waterfall.svelte` -- echtes Zoom-FFT ist RX-Hardware-Arbeit).
+- Modus-Formulare für alle vier MVP-Modi (FM inkl. CTCSS-Feld, SSB/LSB,
+  M17 inkl. Rufzeichenfelder, POCSAG inkl. RIC/Text), Geräte-Scan-Anbindung.
+- Audio-Pipeline (M3-Vorgriff, das ohne Hardware machbare Stück):
+  `SimBackend` erzeugt einen Dauerton pro RX-Modus, Web Audio-Wiedergabe im
+  Browser (`frontend/src/lib/audio.ts`); TX-Mikrofonaufnahme (Press-and-
+  Hold-PTT bei Audio-Modi) wird erfasst und über den Binärkanal gesendet,
+  vom Backend entgegengenommen. Bewusst mit `ScriptProcessorNode` (nicht
+  `AudioWorklet`) gebaut, um ohne zusätzliche Worklet-Build-Schritte sofort
+  verifizierbar zu sein -- Umstieg auf `AudioWorklet` ist Härtungsarbeit
+  für M5.
+
+Noch offen, bewusst nicht in diesem Schritt: Auth/Login (einfaches,
+geteiltes Passwort reicht laut Setting), persistentes TX-Log,
+`GnuRadioBackend` selbst (siehe `docs/DEBUGGING.md` -- blind ohne GNU
+Radio geschrieben wäre riskanter als nützlich; wird verifiziert, sobald
+eine Session mit echtem GNU Radio/Hardware zur Verfügung steht).

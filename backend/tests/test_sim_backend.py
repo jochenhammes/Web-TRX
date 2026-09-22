@@ -2,33 +2,37 @@
 -- the fast layer of the debugging strategy from docs/PROJECT_PLAN.md: pure
 Python/numpy, no GNU Radio/libiio required, runs anywhere including this
 dev container and CI."""
+import asyncio
+
 import numpy as np
 import pytest
 
-from web_trx.session import SessionError
-from web_trx.sim_backend import SimBackend
+from web_trx.session import AudioFrame, SessionError
+from web_trx.sim_backend import AUDIO_SAMPLE_RATE_HZ, SimBackend
 
 
 def make_backend():
     b = SimBackend()
     events = []
+    spectrum_frames = []
+    audio_frames = []
 
     async def emit_event(name, fields):
         events.append((name, fields))
 
     async def on_spectrum(frame):
-        pass
+        spectrum_frames.append(frame)
 
     async def on_audio(frame):
-        pass
+        audio_frames.append(frame)
 
     b.bind(emit_event, on_spectrum, on_audio)
-    return b, events
+    return b, events, spectrum_frames, audio_frames
 
 
 @pytest.mark.asyncio
 async def test_connect_then_select_mode_then_tune():
-    b, _events = make_backend()
+    b, _events, _spectrum, _audio = make_backend()
     await b.connect("rx", "sim", "")
     await b.select_mode("rx", "fm", {})
     await b.tune("rx", 145_500_000.0)
@@ -38,14 +42,14 @@ async def test_connect_then_select_mode_then_tune():
 
 @pytest.mark.asyncio
 async def test_select_mode_before_connect_is_refused():
-    b, _events = make_backend()
+    b, _events, _spectrum, _audio = make_backend()
     with pytest.raises(SessionError):
         await b.select_mode("rx", "fm", {})
 
 
 @pytest.mark.asyncio
 async def test_unsupported_mode_is_refused():
-    b, _events = make_backend()
+    b, _events, _spectrum, _audio = make_backend()
     await b.connect("tx", "sim", "")
     with pytest.raises(SessionError):
         await b.select_mode("tx", "not-a-real-mode", {})
@@ -53,14 +57,14 @@ async def test_unsupported_mode_is_refused():
 
 @pytest.mark.asyncio
 async def test_ptt_without_tx_mode_is_refused():
-    b, _events = make_backend()
+    b, _events, _spectrum, _audio = make_backend()
     with pytest.raises(SessionError):
         await b.ptt(True)
 
 
 @pytest.mark.asyncio
 async def test_fm_ptt_on_off_emits_keyed_unkeyed():
-    b, events = make_backend()
+    b, events, _spectrum, _audio = make_backend()
     await b.connect("tx", "sim", "")
     await b.select_mode("tx", "fm", {})
     await b.ptt(True)
@@ -72,8 +76,8 @@ async def test_fm_ptt_on_off_emits_keyed_unkeyed():
 
 
 @pytest.mark.asyncio
-async def test_pocsag_ptt_auto_unkeys_and_emits_message(): # walking-skeleton mode, see PROJECT_PLAN.md
-    b, events = make_backend()
+async def test_pocsag_ptt_auto_unkeys_and_emits_message():  # walking-skeleton mode, see PROJECT_PLAN.md
+    b, events, _spectrum, _audio = make_backend()
     await b.connect("tx", "sim", "")
     await b.select_mode("tx", "pocsag", {"ric": 42, "text": "hi"})
     await b.ptt(True)
@@ -85,7 +89,7 @@ async def test_pocsag_ptt_auto_unkeys_and_emits_message(): # walking-skeleton mo
 
 @pytest.mark.asyncio
 async def test_estop_forces_unkey_even_mid_pocsag():
-    b, events = make_backend()
+    b, events, _spectrum, _audio = make_backend()
     await b.connect("tx", "sim", "")
     await b.select_mode("tx", "pocsag", {"ric": 1, "text": "x"})
     await b.ptt(True)
@@ -97,14 +101,14 @@ async def test_estop_forces_unkey_even_mid_pocsag():
 
 @pytest.mark.asyncio
 async def test_estop_is_idempotent_when_not_keyed():
-    b, _events = make_backend()
+    b, _events, _spectrum, _audio = make_backend()
     await b.estop()
     await b.estop()  # must not raise
 
 
 @pytest.mark.asyncio
 async def test_spectrum_row_shape_and_dtype():
-    b, _events = make_backend()
+    b, _events, _spectrum, _audio = make_backend()
     await b.connect("rx", "sim", "")
     row = b._synthetic_row()
     assert row.dtype == np.float32
@@ -114,9 +118,38 @@ async def test_spectrum_row_shape_and_dtype():
 
 @pytest.mark.asyncio
 async def test_snapshot_reflects_state():
-    b, _events = make_backend()
+    b, _events, _spectrum, _audio = make_backend()
     await b.connect("rx", "sim", "")
     await b.select_mode("rx", "ssb", {})
     snap = b.snapshot()
     assert snap["rx"]["mode"] == "ssb"
     assert snap["tx"]["mode"] is None
+
+
+@pytest.mark.asyncio
+async def test_audio_loop_silent_until_connected_and_moded():
+    b, _events, _spectrum, audio = make_backend()
+    task = asyncio.ensure_future(b._audio_loop())
+    try:
+        await asyncio.sleep(0.05)
+        assert audio == []  # not connected yet -- no audio should be produced
+        await b.connect("rx", "sim", "")
+        await asyncio.sleep(0.05)
+        assert audio == []  # connected but no mode selected yet
+        await b.select_mode("rx", "fm", {})
+        await asyncio.sleep(0.15)  # > AUDIO_CHUNK_S, one tick should land
+    finally:
+        task.cancel()
+    assert len(audio) >= 1
+    frame: AudioFrame = audio[0]
+    assert frame.sample_rate_hz == AUDIO_SAMPLE_RATE_HZ
+    assert len(frame.pcm16) > 0
+    assert len(frame.pcm16) % 2 == 0  # whole int16 samples
+
+
+@pytest.mark.asyncio
+async def test_submit_tx_audio_is_counted():
+    b, _events, _spectrum, _audio = make_backend()
+    assert b.tx_audio_frames_received == 0
+    await b.submit_tx_audio(AudioFrame(pcm16=b"\x00\x01\x02\x03", sample_rate_hz=48_000))
+    assert b.tx_audio_frames_received == 1

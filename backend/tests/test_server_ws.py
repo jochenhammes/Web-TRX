@@ -81,3 +81,36 @@ def test_spectrum_binary_frame_after_rx_connect():
         assert protocol.peek_frame_type(raw) == protocol.BinaryFrameType.SPECTRUM_ROW
         decoded = protocol.decode_spectrum_row(raw)
         assert decoded["row"].shape == (2048,)
+
+
+def test_rx_audio_binary_frame_after_connect_and_mode():
+    with make_client() as client, client.websocket_connect("/ws") as ws:
+        ws.receive_json()  # hello
+        ws.send_json({"request": "connect", "direction": "rx", "device_type": "sim"})
+        assert ws.receive_json()["event"] == "connected"
+        ws.send_json({"request": "select_mode", "direction": "rx", "mode": "fm", "params": {}})
+        assert ws.receive_json()["event"] == "mode"
+
+        # Spectrum rows (20 Hz) interleave with audio chunks (10 Hz) on the
+        # same socket -- skip any spectrum frames until an RX_AUDIO frame
+        # shows up, rather than assuming a fixed arrival order.
+        for _ in range(20):
+            raw = ws.receive_bytes()
+            if protocol.peek_frame_type(raw) == protocol.BinaryFrameType.RX_AUDIO:
+                assert len(raw) > 5
+                return
+        raise AssertionError("no RX_AUDIO frame arrived")
+
+
+def test_tx_audio_binary_frame_is_accepted_without_error():
+    with make_client() as client, client.websocket_connect("/ws") as ws:
+        ws.receive_json()  # hello
+        ws.send_json({"request": "connect", "direction": "tx", "device_type": "sim"})
+        assert ws.receive_json()["event"] == "connected"
+
+        tx_audio_frame = bytes([protocol.BinaryFrameType.TX_AUDIO]) + (48_000).to_bytes(4, "little") + b"\x00\x01" * 100
+        ws.send_bytes(tx_audio_frame)
+        # No response is expected for a binary frame -- proven by the
+        # connection staying open and still answering a normal request.
+        ws.send_json({"request": "tune", "direction": "tx", "freq_hz": 432_500_000})
+        assert ws.receive_json()["event"] == "tuned"

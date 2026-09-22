@@ -19,6 +19,12 @@ FFT_SIZE = 2048
 SPECTRUM_RATE_HZ = 20.0
 DEFAULT_SPAN_HZ = 2_500_000.0
 
+AUDIO_SAMPLE_RATE_HZ = 8000
+AUDIO_CHUNK_S = 0.1
+# Distinct tone per mode purely so a human listening while developing can
+# tell modes apart -- not a claim that SimBackend demodulates anything.
+AUDIO_TONE_HZ = {"fm": 600.0, "ssb": 900.0, "lsb": 750.0, "m17": 440.0, "pocsag": 300.0}
+
 # Mirrors the MVP mode set from docs/PROJECT_PLAN.md section 4 (lsb kept
 # alongside ssb the same way vendor/pluto-tx exposes both as separate
 # sideband-fixed modes rather than one mode with a sideband flag).
@@ -45,7 +51,10 @@ class SimBackend(SessionBackend):
         self._generation = 0
         self._rng = np.random.default_rng(1)
         self._spectrum_task: asyncio.Task | None = None
+        self._audio_task: asyncio.Task | None = None
         self._pocsag_unkey_task: asyncio.Task | None = None
+        self._audio_phase = 0.0
+        self.tx_audio_frames_received = 0  # test/diagnostic hook, see submit_tx_audio()
 
     def _state(self, direction: str) -> _DirectionState:
         if direction == "tx":
@@ -148,7 +157,10 @@ class SimBackend(SessionBackend):
             await self._emit_event("unkeyed", {"mode": self.tx.mode})
 
     async def submit_tx_audio(self, frame: AudioFrame) -> None:
-        pass  # SimBackend never transmits real audio -- channel only needs to be exercised, see tests.
+        # SimBackend never actually transmits audio -- accepting/counting
+        # frames is enough to exercise the mic-capture -> WS -> backend leg
+        # of the pipeline end-to-end without real hardware, see tests.
+        self.tx_audio_frames_received += 1
 
     def snapshot(self) -> dict:
         return {
@@ -159,19 +171,23 @@ class SimBackend(SessionBackend):
     async def shutdown(self) -> None:
         if self._spectrum_task is not None:
             self._spectrum_task.cancel()
+        if self._audio_task is not None:
+            self._audio_task.cancel()
         if self._pocsag_unkey_task is not None:
             self._pocsag_unkey_task.cancel()
         self.keyed = False
 
-    # -- Background spectrum generator. Not part of SessionBackend's ABC
-    # (no control request triggers it) -- exercises the binary WS channel
-    # continuously once RX is connected, exactly like a real FftProbe feeds
-    # a waterfall independent of control-plane activity (see
-    # vendor/pluto-tx pluto_advanced_rx/fft_probe.py). --
+    # -- Background generators. Neither is part of SessionBackend's ABC (no
+    # control request triggers them) -- both exercise their binary WS
+    # channel continuously once RX is connected, independent of
+    # control-plane activity, exactly like a real FftProbe/audio sink would
+    # (see vendor/pluto-tx pluto_advanced_rx/fft_probe.py). --
 
     def start_background_tasks(self) -> None:
         if self._spectrum_task is None:
             self._spectrum_task = asyncio.create_task(self._spectrum_loop())
+        if self._audio_task is None:
+            self._audio_task = asyncio.create_task(self._audio_loop())
 
     async def _spectrum_loop(self) -> None:
         period_s = 1.0 / SPECTRUM_RATE_HZ
@@ -184,6 +200,24 @@ class SimBackend(SessionBackend):
                 row=self._synthetic_row(), center_hz=self.rx.freq_hz, span_hz=DEFAULT_SPAN_HZ,
                 generation=self._generation,
             ))
+
+    async def _audio_loop(self) -> None:
+        """A steady sine tone (frequency depends on RX mode, purely so a
+        human can tell modes apart while listening) once RX is connected
+        AND a mode is selected -- NOT a demodulation simulation, just
+        enough to exercise the RX audio WS channel and the browser's
+        Web Audio playback path (frontend/src/lib/audio.ts) end-to-end
+        without real hardware."""
+        n = int(AUDIO_SAMPLE_RATE_HZ * AUDIO_CHUNK_S)
+        while True:
+            await asyncio.sleep(AUDIO_CHUNK_S)
+            if self.rx.connection is None or self.rx.mode is None:
+                continue
+            freq_hz = AUDIO_TONE_HZ.get(self.rx.mode, 500.0)
+            t = (np.arange(n) + self._audio_phase) / AUDIO_SAMPLE_RATE_HZ
+            samples = (0.2 * np.sin(2 * np.pi * freq_hz * t) * 32767).astype("<i2")
+            self._audio_phase += n
+            await self._on_audio(AudioFrame(pcm16=samples.tobytes(), sample_rate_hz=AUDIO_SAMPLE_RATE_HZ))
 
     def _synthetic_row(self) -> np.ndarray:
         """NOT a physical simulation -- a fixed noise floor plus a few fake
