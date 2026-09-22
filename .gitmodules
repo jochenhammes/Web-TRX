@@ -1,0 +1,3 @@
+[submodule "vendor/pluto-tx"]
+	path = vendor/pluto-tx
+	url = https://github.com/jochenhammes/pluto-tx.git
