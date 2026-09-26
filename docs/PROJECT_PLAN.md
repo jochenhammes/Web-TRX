@@ -308,6 +308,13 @@ Umgesetzt und per Tests + echtem Chromium-Browser verifiziert (siehe
   `SessionBackend`, nicht nur `SimBackend`. Eigenes TX-Verlauf-Panel im
   Frontend.
 
+- Modus-Parameter zentral geprüft (`web_trx/modes.py`, spiegelt die
+  pluto-cli-Flags): FM-TX mit Hub 2,5/5 kHz, Pre-Emphasis und CTCSS aus der
+  Standardtonliste, FM-RX mit De-Emphasis (pluto-tx `c45531d`). Ungültige
+  Werte werden zum `error`-Event, Defaults werden ergänzt; die Wertetabellen
+  prüft ein Test gegen die gepinnte `vendor/pluto-tx`-Konfiguration. Das
+  Frontend baut seine Auswahllisten aus dem `hello`-Event.
+
 Noch offen, bewusst nicht in diesem Schritt: `GnuRadioBackend` selbst
 (siehe `docs/DEBUGGING.md` -- blind ohne GNU Radio geschrieben wäre
 riskanter als nützlich; wird verifiziert, sobald eine Session mit echtem

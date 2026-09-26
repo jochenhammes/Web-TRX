@@ -2,6 +2,7 @@
    accent, light text everywhere text is entered or selected (inputs,
    selects). Loaded once, globally, from main.ts. */
 :root {
+  color-scheme: dark; /* native controls (unchecked checkboxes, scrollbars) render dark too */
   --bg-0: #0a0c11; /* page background, darkest */
   --bg-1: #131720; /* panels */
   --bg-2: #1b202c; /* inputs, selects, buttons */
@@ -126,6 +127,26 @@ button.danger {
 
 button.danger:hover:not(:disabled) {
   background: var(--danger);
+}
+
+/* -- checkboxes -- */
+
+input[type="checkbox"] {
+  accent-color: var(--accent);
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  cursor: pointer;
+}
+
+label.check {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.8rem;
+  color: var(--text);
+  cursor: pointer;
+  user-select: none;
 }
 
 /* -- sliders -- */

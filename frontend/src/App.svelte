@@ -44,6 +44,19 @@
   let ceilingDb = -20;
   let zoom = 1;
   let audioOn = false;
+  let rxDeemphasis = true;
+
+  // Choice lists come from the backend's 'hello' (web_trx/modes.py), which
+  // in turn is test-checked against vendor/pluto-tx's config -- no third
+  // hardcoded copy of the CTCSS table or deviation choices here.
+  interface FmOptions {
+    deviation_choices_hz: number[];
+    deviation_default_hz: number;
+    preemphasis_default: boolean;
+    deemphasis_default: boolean;
+    ctcss_tones_hz: number[];
+  }
+  let fmOptions: FmOptions | null = null;
 
   // -- TX state --
   let txDeviceType = "sim";
@@ -52,7 +65,9 @@
   let txConnected = false;
   let txMode = "pocsag";
   let txFreqHz = 432_500_000;
-  let ctcssHz = "";
+  let ctcssHz: number | "" = "";
+  let fmDeviationHz = 2500;
+  let fmPreemphasis = true;
   let srcCallsign = "";
   let dstCallsign = "@ALL";
   let ric = 1234567;
@@ -73,7 +88,15 @@
     log("WS getrennt");
   };
   client.onEvent = (e: ServerEvent) => {
-    if (e.event === "hello") backendName = String(e.backend);
+    if (e.event === "hello") {
+      backendName = String(e.backend);
+      if (fmOptions === null) {
+        fmOptions = (e.mode_options as { fm: FmOptions }).fm;
+        fmDeviationHz = fmOptions.deviation_default_hz;
+        fmPreemphasis = fmOptions.preemphasis_default;
+        rxDeemphasis = fmOptions.deemphasis_default;
+      }
+    }
     if (e.event === "connected") {
       if (e.direction === "rx") rxConnected = true;
       if (e.direction === "tx") txConnected = true;
@@ -147,7 +170,8 @@
     client.request("disconnect", { direction: "rx" });
   }
   function selectRxMode(): void {
-    client.request("select_mode", { direction: "rx", mode: rxMode, params: {} });
+    const params = rxMode === "fm" ? { deemphasis: rxDeemphasis } : {};
+    client.request("select_mode", { direction: "rx", mode: rxMode, params });
   }
   function tuneRx(): void {
     client.request("tune", { direction: "rx", freq_hz: rxFreqHz });
@@ -172,7 +196,9 @@
     client.request("disconnect", { direction: "tx" });
   }
   function txModeParams(): Record<string, unknown> {
-    if (txMode === "fm") return ctcssHz ? { ctcss_hz: Number(ctcssHz) } : {};
+    if (txMode === "fm") {
+      return { deviation_hz: fmDeviationHz, preemphasis: fmPreemphasis, ctcss_hz: ctcssHz === "" ? null : ctcssHz };
+    }
     if (txMode === "m17") return { src_callsign: srcCallsign, dst_callsign: dstCallsign };
     if (txMode === "pocsag") return { ric, text: pocsagText };
     return {};
@@ -265,6 +291,12 @@
         {#each MODES as [v, l]}<option value={v}>{l}</option>{/each}
       </select>
       <button on:click={toggleAudio}>{audioOn ? "\u{1F50A} RX-Audio an" : "\u{1F507} RX-Audio aus"}</button>
+      {#if rxMode === "fm"}
+        <label class="check">
+          <input type="checkbox" bind:checked={rxDeemphasis} on:change={selectRxMode} disabled={!rxConnected} />
+          De-Emphasis 750 &micro;s
+        </label>
+      {/if}
     </div>
 
     <div class="row">
@@ -325,9 +357,28 @@
     {#if txMode === "fm"}
       <div class="row">
         <div class="field">
-          <label for="ctcssHz">CTCSS Hz (leer = aus)</label>
-          <input id="ctcssHz" type="text" bind:value={ctcssHz} placeholder="z.B. 88.5" on:change={selectTxMode} />
+          <label for="fmDeviation">Hub</label>
+          <select id="fmDeviation" bind:value={fmDeviationHz} on:change={selectTxMode}>
+            {#each fmOptions?.deviation_choices_hz ?? [] as d}
+              <option value={d}>&plusmn;{(d / 1000).toFixed(1)} kHz {d <= 2500 ? "(schmal)" : "(breit)"}</option>
+            {/each}
+          </select>
         </div>
+        <div class="field">
+          <label for="ctcssHz">CTCSS</label>
+          <select id="ctcssHz" bind:value={ctcssHz} on:change={selectTxMode}>
+            <option value="">aus</option>
+            {#each fmOptions?.ctcss_tones_hz ?? [] as t}
+              <option value={t}>{t.toFixed(1)} Hz</option>
+            {/each}
+          </select>
+        </div>
+      </div>
+      <div class="row">
+        <label class="check">
+          <input type="checkbox" bind:checked={fmPreemphasis} on:change={selectTxMode} />
+          Pre-Emphasis 750 &micro;s
+        </label>
       </div>
     {:else if txMode === "m17"}
       <div class="row">

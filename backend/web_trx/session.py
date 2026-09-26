@@ -20,7 +20,7 @@ from collections.abc import Awaitable, Callable
 import numpy as np
 from fastapi import WebSocket, WebSocketDisconnect
 
-from . import protocol
+from . import modes, protocol
 
 logger = logging.getLogger("web_trx.session")
 
@@ -140,7 +140,10 @@ class SessionManager:
         await ws.accept()
         self._clients.add(ws)
         try:
-            await ws.send_json({"event": "hello", "backend": self.backend_name, **self.backend.snapshot()})
+            await ws.send_json({
+                "event": "hello", "backend": self.backend_name,
+                "mode_options": modes.client_options(), **self.backend.snapshot(),
+            })
             while True:
                 message = await ws.receive()
                 if message.get("type") == "websocket.disconnect":
@@ -189,8 +192,14 @@ class SessionManager:
             await b.disconnect(params["direction"])
             await self._emit_event("disconnected", {"direction": params["direction"]})
         elif request == "select_mode":
-            await b.select_mode(params["direction"], params["mode"], params.get("params") or {})
-            await self._emit_event("mode", {"direction": params["direction"], "mode": params["mode"]})
+            try:
+                mode_params = modes.normalize_params(params["direction"], params["mode"], params.get("params") or {})
+            except ValueError as e:
+                raise SessionError(str(e)) from e
+            await b.select_mode(params["direction"], params["mode"], mode_params)
+            await self._emit_event("mode", {
+                "direction": params["direction"], "mode": params["mode"], "params": mode_params,
+            })
         elif request == "tune":
             await b.tune(params["direction"], float(params["freq_hz"]))
             await self._emit_event("tuned", {"direction": params["direction"], "freq_hz": params["freq_hz"]})

@@ -78,6 +78,38 @@ def test_hello_on_connect():
             assert hello["event"] == "hello"
             assert hello["backend"] == "SimBackend"
             assert hello["tx"]["mode"] is None
+            assert hello["mode_options"]["fm"]["deviation_choices_hz"] == [2500.0, 5000.0]
+
+
+def test_fm_tx_params_are_normalized_and_stored():
+    with make_client() as client:
+        login(client)
+        with client.websocket_connect("/ws") as ws:
+            ws.receive_json()  # hello
+            ws.send_json({"request": "connect", "direction": "tx", "device_type": "sim"})
+            assert ws.receive_json()["event"] == "connected"
+            ws.send_json({"request": "select_mode", "direction": "tx", "mode": "fm",
+                          "params": {"deviation_hz": 5000, "ctcss_hz": 88.5}})
+            mode_event = ws.receive_json()
+            assert mode_event["event"] == "mode"
+            assert mode_event["params"] == {"deviation_hz": 5000.0, "preemphasis": True, "ctcss_hz": 88.5}
+        backend = client.app.state.manager.backend
+        assert backend.snapshot()["tx"]["mode_params"]["deviation_hz"] == 5000.0
+
+
+def test_invalid_fm_params_become_error_event_and_keep_previous_mode():
+    with make_client() as client:
+        login(client)
+        with client.websocket_connect("/ws") as ws:
+            ws.receive_json()  # hello
+            ws.send_json({"request": "connect", "direction": "tx", "device_type": "sim"})
+            ws.receive_json()  # connected
+            ws.send_json({"request": "select_mode", "direction": "tx", "mode": "fm",
+                          "params": {"deviation_hz": 3000}})
+            err = ws.receive_json()
+            assert err["event"] == "error"
+            assert "deviation_hz" in err["message"]
+        assert client.app.state.manager.backend.snapshot()["tx"]["mode"] is None
 
 
 def test_full_pocsag_round_trip_over_ws():
