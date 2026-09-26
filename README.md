@@ -10,11 +10,43 @@ Projektplan (Architektur, Betriebsarten-Analyse, Meilensteine):
 [`docs/PROJECT_PLAN.md`](docs/PROJECT_PLAN.md).
 Debug-/Teststrategie: [`docs/DEBUGGING.md`](docs/DEBUGGING.md).
 
+## Aktueller Stand
+
+Die komplette Web-Seite läuft — **aber noch ohne echte Hardware**: das
+einzige Backend ist bisher `SimBackend`, ein Simulator ohne GNU Radio
+(synthetisches Spektrum, Testton statt Demodulation). Alles unten ist per
+Tests (56 im Backend) und im echten Browser gegen den Simulator geprüft.
+
+**Fertig**
+- WebSocket-Protokoll (JSON-Steuerung + Binärkanal für Spektrum und Audio),
+  Session-Zustandsautomat mit PTT, Auto-Unkey bei POCSAG und NOTAUS
+- Login mit geteiltem Passwort (Session-Cookie), WebSocket ohne Login gesperrt
+- Persistentes TX-Log (SQLite) jeder Aussendung, TX-Verlauf im Frontend
+- Oberfläche im SDR++-Stil: Wasserfall + Spektrum mit Klick-zum-Tunen,
+  Zoom-, Floor- und Ceiling-Slider, Geräte-Scan, Verbinden/Trennen
+- Modi FM, SSB (USB/LSB), M17, POCSAG mit ihren Parametern: FM mit Hub
+  2,5/5 kHz, Pre-/De-Emphasis und CTCSS-Standardtönen, M17 mit Rufzeichen,
+  POCSAG mit RIC/Text — zentral geprüft in `backend/web_trx/modes.py`
+- Audio-Pipeline im Browser: RX-Wiedergabe, TX-Mikrofon bei gedrückter PTT
+
+**Offen**
+- `GnuRadioBackend`: die Anbindung an die echten pluto-tx-Flowgraphs und
+  damit an Pluto/HackRF/RTL-SDR. Braucht einen Rechner mit GNU Radio und
+  angeschlossener Hardware (siehe `docs/DEBUGGING.md`)
+- Echtes Zoom-FFT (derzeit nur Ausschnitt der Anzeige), `AudioWorklet`
+  statt `ScriptProcessorNode`, Opus über langsame Links
+- Härtung (Reconnect, Mehrgeräte, Fehleranzeige), Deployment (systemd,
+  TLS-Reverse-Proxy, VPN)
+- Weitere Modi (PSK31, RTTY, FreeDV, RADE, Meshtastic, …)
+
+Details und Begründungen: [`docs/PROJECT_PLAN.md`](docs/PROJECT_PLAN.md),
+Abschnitt 9. Gepinnte pluto-tx-Version: `c45531d`.
+
 ## Struktur
 
 ```
-backend/    FastAPI-Server (Python) -- SessionManager + SimBackend/GnuRadioBackend
-frontend/   Svelte/TypeScript-SPA -- Wasserfall, Steuerpanels, Event-Log
+backend/    FastAPI-Server (Python) -- SessionManager, SimBackend, Auth, TX-Log, Modus-Parameter
+frontend/   Svelte/TypeScript-SPA -- Login, Wasserfall, Steuerpanels, TX-Verlauf, Event-Log
 vendor/     Git-Submodule: pluto-tx (read-only, gepinnter Commit)
 docs/       Projektplan, Debugging-Strategie
 ```
@@ -30,9 +62,9 @@ uvicorn web_trx.server:create_app --factory --reload --port 8321
 ```
 
 `WEB_TRX_BACKEND` steuert, welche `SessionBackend`-Implementierung der
-Server verwendet: `sim` (Default, keine Hardware nötig) oder `gnuradio`
-(nur auf einem System mit GNU Radio/libiio und angeschlossener SDR-
-Hardware lauffähig, siehe `vendor/pluto-tx`).
+Server verwendet: `sim` (Default, keine Hardware nötig). `gnuradio` ist
+vorgesehen, aber **noch nicht implementiert** — der Server startet damit
+derzeit nicht (siehe „Aktueller Stand“).
 
 **Login:** ein geteiltes Passwort reicht (immer nur ein Betreiber, siehe
 `docs/PROJECT_PLAN.md` Abschnitt 1). `WEB_TRX_PASSWORD` setzen, sonst
@@ -65,8 +97,9 @@ git commit -m "vendor/pluto-tx: bump to <neuer-commit>"
 ```
 
 Beim Klonen: `git clone --recurse-submodules ...` bzw. nachträglich
-`git submodule update --init`.
+`git submodule update --init`. Nach jedem `git pull` zusätzlich
+`git submodule update`, sonst bleibt `vendor/pluto-tx` auf dem alten Stand.
 
 ## Lizenz
 
-[GPLv3](LICENSE) — wie `pluto-tx`, dessen Code das Backend importiert.
+[GPLv3](LICENSE) — wie `pluto-tx`, dessen Code das Backend importieren wird.
